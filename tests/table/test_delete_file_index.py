@@ -117,6 +117,7 @@ class TestEqualityDeletesGroup:
         delete_index.add_delete_file(manifest_entry)
 
         # Should be ignored due to empty equality_ids
+        assert delete_index.global_eq_deletes._buffer is not None
         assert len(delete_index.global_eq_deletes._buffer) == 0
 
 

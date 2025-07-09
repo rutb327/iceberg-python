@@ -1765,7 +1765,7 @@ def test_table_scan_integration_with_equality_deletes(table_v2: Table) -> None:
 
     schema = Schema(
         NestedField(1, "field1", StringType(), required=False),
-        NestedField(2, "field2", IntegerType(), required=False),
+        NestedField(2, "field2", StringType(), required=False),
     )
     delete_file_index = DeleteFileIndex(schema)
     delete_file_index.add_delete_file(eq_delete_entry_1)

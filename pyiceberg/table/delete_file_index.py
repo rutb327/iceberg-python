@@ -1,6 +1,7 @@
 from bisect import bisect_left
 from typing import Any, Dict, List, Optional
 
+from pyiceberg.conversions import from_bytes
 from pyiceberg.expressions import EqualTo
 from pyiceberg.expressions.visitors import _InclusiveMetricsEvaluator
 from pyiceberg.manifest import POSITIONAL_DELETE_SCHEMA, DataFile, DataFileContent, ManifestEntry
@@ -18,6 +19,8 @@ class EqualityDeleteFileWrapper:
         self.delete_file = manifest_entry.data_file
         self.schema = schema
         self.apply_sequence_number = (manifest_entry.sequence_number or 0) - 1
+        self._converted_lower_bounds: Optional[Dict[int, Any]] = None
+        self._converted_upper_bounds: Optional[Dict[int, Any]] = None
 
     def equality_fields(self) -> List[NestedField]:
         """Get equality fields for current delete file."""
@@ -27,6 +30,32 @@ class EqualityDeleteFileWrapper:
             if field:
                 fields.append(field)
         return fields
+
+    def lower_bound(self, field_id: int) -> Optional[Any]:
+        """Convert or get lower bound for a field."""
+        if self._converted_lower_bounds is None:
+            self._converted_lower_bounds = self._convert_bounds(self.delete_file.lower_bounds)
+        return self._converted_lower_bounds.get(field_id)
+
+    def upper_bound(self, field_id: int) -> Optional[Any]:
+        """Convert or get upper bound for a field."""
+        if self._converted_upper_bounds is None:
+            self._converted_upper_bounds = self._convert_bounds(self.delete_file.upper_bounds)
+        return self._converted_upper_bounds.get(field_id)
+
+    def _convert_bounds(self, bounds: Dict[int, bytes]) -> Dict[int, Any]:
+        """Convert byte bounds to their proper types."""
+        if not bounds:
+            return {}
+
+        converted = {}
+        for field in self.equality_fields():
+            field_id = field.field_id
+            bound = bounds.get(field_id)
+            if bound is not None:
+                # Use the field type to convert the bound
+                converted[field_id] = from_bytes(field.field_type, bound)
+        return converted
 
 
 class PositionalDeleteFileWrapper:
@@ -45,21 +74,24 @@ class DeletesGroup:
     """
 
     def __init__(self) -> None:
-        self._buffer: List[Any] = []
+        self._buffer: Optional[List[Any]] = []
         self._sorted: bool = False  # Lazy sorting flag
         self._seqs: Optional[List[int]] = None
         self._files: Optional[List[Any]] = None
 
     def add(self, wrapper: Any) -> None:
         """Add a delete file wrapper to the group."""
+        if self._buffer is None:
+            raise ValueError("Can't add files to group after indexing")
         self._buffer.append(wrapper)
         self._sorted = False
 
     def _index_if_needed(self) -> None:
         """Sort wrappers by apply_sequence_number if not already sorted."""
         if not self._sorted:
-            self._files = sorted(self._buffer, key=lambda f: f.apply_sequence_number)
+            self._files = sorted(self._buffer, key=lambda f: f.apply_sequence_number)  # type: ignore
             self._seqs = [f.apply_sequence_number for f in self._files]
+            self._buffer = None
             self._sorted = True
 
     def _get_candidates(self, seq: int) -> List[Any]:
@@ -105,6 +137,8 @@ class EqualityDeletesGroup(DeletesGroup):
 
         # Check each equality field
         for field in delete_wrapper.equality_fields():
+            if not field.field_type.is_primitive:
+                continue
             field_id = field.field_id
 
             # Check null values
@@ -131,14 +165,18 @@ class EqualityDeletesGroup(DeletesGroup):
                 and delete_file.lower_bounds is not None
                 and delete_file.upper_bounds is not None
             ):
-                data_lower = data_lowers.get(field_id)
-                data_upper = data_uppers.get(field_id)
-                delete_lower = delete_file.lower_bounds.get(field_id)
-                delete_upper = delete_file.upper_bounds.get(field_id)
+                data_lower_bytes = data_lowers.get(field_id)
+                data_upper_bytes = data_uppers.get(field_id)
+                delete_lower = delete_wrapper.lower_bound(field_id)
+                delete_upper = delete_wrapper.upper_bound(field_id)
 
                 # If any bound is missing, assume they overlap
-                if data_lower is None or data_upper is None or delete_lower is None or delete_upper is None:
+                if data_lower_bytes is None or data_upper_bytes is None or delete_lower is None or delete_upper is None:
                     continue
+
+                # converting data file bounds
+                data_lower = from_bytes(field.field_type, data_lower_bytes)
+                data_upper = from_bytes(field.field_type, data_upper_bytes)
 
                 # Check if bounds don't overlap
                 if data_lower > delete_upper or data_upper < delete_lower:
@@ -232,7 +270,7 @@ class DeleteFileIndex:
 
             if is_unpartitioned:
                 # If the spec is unpartitioned, add to global deletes
-                self.global_eq_deletes.add(wrapper)
+                self._add_to_partition_group(wrapper, None)
             else:
                 # Otherwise, add to partition-specific deletes
                 self._add_to_partition_group(wrapper, partition_key)

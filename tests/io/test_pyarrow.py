@@ -2352,9 +2352,10 @@ def test_read_equality_deletes(equality_deletes_file_path: str) -> None:
             equality_ids=[1, 2],
         ),
     )
-    assert deletes["equality_deletes"].num_rows == 2
-    assert deletes["equality_deletes"]["foo"].to_pylist() == ["a", "b"]
-    assert deletes["equality_deletes"]["bar"].to_pylist() == [1, 2]
+    assert isinstance(deletes, pa.Table)
+    assert deletes.num_rows == 2
+    assert deletes["foo"].to_pylist() == ["a", "b"]
+    assert deletes["bar"].to_pylist() == [1, 2]
 
 
 def test_equality_delete(

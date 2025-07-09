@@ -921,7 +921,7 @@ def _construct_fragment(fs: FileSystem, data_file: DataFile, file_format_kwargs:
     return _get_file_format(data_file.file_format, **file_format_kwargs).make_fragment(path, fs)
 
 
-def _read_deletes(fs: FileSystem, data_file: DataFile) -> Dict[str, pa.ChunkedArray]:
+def _read_deletes(fs: FileSystem, data_file: DataFile) -> Union[Dict[str, pa.ChunkedArray], pa.Table]:
     if data_file.file_format == FileFormat.PARQUET:
         delete_fragment = _construct_fragment(
             fs,
@@ -936,7 +936,7 @@ def _read_deletes(fs: FileSystem, data_file: DataFile) -> Dict[str, pa.ChunkedAr
                 for file in table.column("file_path").chunks[0].dictionary
             }
         elif data_file.content == DataFileContent.EQUALITY_DELETES:
-            return {"equality_deletes": table}
+            return table
         else:
             raise ValueError(f"Unsupported delete file content: {data_file.content}")
     elif data_file.file_format == FileFormat.PUFFIN:
@@ -1518,7 +1518,7 @@ def _read_all_delete_files(io: FileIO, tasks: Iterable[FileScanTask]) -> Dict[st
 
         # Processing equality delete tasks in parallel like position deletes
         equality_delete_results = executor.map(
-            lambda args: (args[0], _read_deletes(_fs_from_file_path(io, args[1].file_path), args[1])["equality_deletes"]),
+            lambda args: (args[0], _read_deletes(_fs_from_file_path(io, args[1].file_path), args[1])),
             equality_delete_tasks,
         )
         for file_path, equality_delete_table in equality_delete_results:
