@@ -16,6 +16,7 @@ from pyiceberg.utils.partition_map import PartitionMap
 from tests.conftest import (
     create_basic_data_file,
     create_basic_equality_delete_file,
+    create_deletion_vector_entry,
     create_equality_delete_entry,
     create_manifest_entry_with_delete_file,
     create_partition_positional_delete_entry,
@@ -396,3 +397,70 @@ class TestDeleteFileIndex:
         # Query with the same partition key should get both deletes
         result = delete_index.for_data_file(2, data_file, partition_key=Record(1))
         assert len(result) == 2  # Both unpartitioned and partitioned deletes
+
+    def test_add_deletion_vector(self, delete_index: DeleteFileIndex) -> None:
+        """Test adding a deletion vector to the index."""
+        data_file_path = "s3://bucket/data.parquet"
+        dv_entry = create_deletion_vector_entry(sequence_number=5, file_path=data_file_path)
+
+        delete_index.add_delete_file(dv_entry)
+
+        assert data_file_path in delete_index.dv_by_path
+        dv, seq = delete_index.dv_by_path[data_file_path]
+        assert dv.file_format == FileFormat.PUFFIN
+        assert seq == 5
+
+    def test_multiple_deletion_vectors_error(self, delete_index: DeleteFileIndex) -> None:
+        """Test that adding multiple deletion vectors for the same file raises an error."""
+        data_file_path = "s3://bucket/data.parquet"
+        dv_entry1 = create_deletion_vector_entry(sequence_number=5, file_path=data_file_path)
+        dv_entry2 = create_deletion_vector_entry(sequence_number=6, file_path=data_file_path)
+
+        delete_index.add_delete_file(dv_entry1)
+
+        with pytest.raises(ValueError, match="Multiple deletion vectors for the same data file"):
+            delete_index.add_delete_file(dv_entry2)
+
+    def test_deletion_vector_precedence(self, delete_index: DeleteFileIndex) -> None:
+        """Test that deletion vectors take precedence over position deletes and follow sequence number conditions."""
+        data_file_path = "s3://bucket/data.parquet"
+
+        pos_delete_entry = create_positional_delete_entry(sequence_number=7, file_path=data_file_path)
+        delete_index.add_delete_file(pos_delete_entry)
+
+        dv_entry = create_deletion_vector_entry(sequence_number=5, file_path=data_file_path)
+        delete_index.add_delete_file(dv_entry)
+
+        data_file = create_basic_data_file(file_path=data_file_path)
+
+        deletes = delete_index.for_data_file(2, data_file)
+        assert len(deletes) == 1
+        assert deletes[0].file_format == FileFormat.PUFFIN
+
+        deletes = delete_index.for_data_file(6, data_file)
+        assert len(deletes) == 1
+        assert deletes[0].file_format == FileFormat.PARQUET
+
+    def test_equality_deletes_with_deletion_vector(self, delete_index: DeleteFileIndex) -> None:
+        """Test that equality deletes are still applied when a deletion vector exists."""
+        data_file_path = "s3://bucket/data.parquet"
+
+        eq_delete_entry = create_equality_delete_entry(sequence_number=3, equality_ids=[1])
+        delete_index.add_delete_file(eq_delete_entry)
+
+        dv_entry = create_deletion_vector_entry(sequence_number=5, file_path=data_file_path)
+        delete_index.add_delete_file(dv_entry)
+
+        data_file = create_basic_data_file(file_path=data_file_path)
+
+        deletes = delete_index.for_data_file(2, data_file)
+
+        assert len(deletes) == 2
+
+        file_formats = {df.file_format for df in deletes}
+        assert FileFormat.PUFFIN in file_formats
+        assert FileFormat.PARQUET in file_formats
+
+        contents = {df.content for df in deletes}
+        assert DataFileContent.POSITION_DELETES in contents
+        assert DataFileContent.EQUALITY_DELETES in contents

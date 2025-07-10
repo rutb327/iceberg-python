@@ -2905,6 +2905,25 @@ def create_partition_positional_delete_entry(sequence_number: int = 1, spec_id: 
     return ManifestEntry.from_args(status=ManifestEntryStatus.ADDED, sequence_number=sequence_number, data_file=delete_file)
 
 
+def create_deletion_vector_entry(
+    sequence_number: int = 1, file_path: str = "s3://bucket/data.parquet", spec_id: int = 0
+) -> ManifestEntry:
+    """Create a deletion vector manifest entry."""
+    delete_file = DataFile.from_args(
+        content=DataFileContent.POSITION_DELETES,
+        file_path=f"s3://bucket/deletion-vector-{sequence_number}.puffin",
+        file_format=FileFormat.PUFFIN,
+        partition=Record(),
+        record_count=10,
+        file_size_in_bytes=100,
+        lower_bounds={2147483546: file_path.encode()},
+        upper_bounds={2147483546: file_path.encode()},
+    )
+    delete_file._spec_id = spec_id
+
+    return ManifestEntry.from_args(status=ManifestEntryStatus.ADDED, sequence_number=sequence_number, data_file=delete_file)
+
+
 # Common schema fixtures for delete tests
 @pytest.fixture(scope="session")
 def simple_id_schema() -> Schema:

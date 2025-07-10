@@ -1,10 +1,10 @@
 from bisect import bisect_left
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from pyiceberg.conversions import from_bytes
 from pyiceberg.expressions import EqualTo
 from pyiceberg.expressions.visitors import _InclusiveMetricsEvaluator
-from pyiceberg.manifest import POSITIONAL_DELETE_SCHEMA, DataFile, DataFileContent, ManifestEntry
+from pyiceberg.manifest import POSITIONAL_DELETE_SCHEMA, DataFile, DataFileContent, FileFormat, ManifestEntry
 from pyiceberg.partitioning import PartitionSpec
 from pyiceberg.schema import Schema
 from pyiceberg.typedef import Record
@@ -248,6 +248,7 @@ class DeleteFileIndex:
 
         # Path-specific deletes
         self.pos_deletes_by_path: Dict[str, PositionalDeletesGroup] = {}
+        self.dv_by_path: Dict[str, Tuple[DataFile, int]] = {}
 
     def add_delete_file(self, manifest_entry: ManifestEntry, partition_key: Optional[Record] = None) -> None:
         """Add delete file to the appropriate partition group based on its type."""
@@ -278,15 +279,25 @@ class DeleteFileIndex:
                 self._add_to_partition_group(wrapper, partition_key)
 
         elif data_file.content == DataFileContent.POSITION_DELETES:
-            pos_wrapper = PositionalDeleteFileWrapper(manifest_entry)
-
-            target_path = self.get_referenced_data_file(data_file)
-            if target_path:
-                # Index by target file path
-                self.pos_deletes_by_path.setdefault(target_path, PositionalDeletesGroup()).add(pos_wrapper)
+            # Check if this is a deletion vector (Puffin format)
+            if data_file.file_format == FileFormat.PUFFIN:
+                target_path = self.get_referenced_data_file(data_file)
+                if target_path:
+                    # Store both the data file and its sequence number
+                    sequence_number = manifest_entry.sequence_number or 0
+                    if self.dv_by_path.get(target_path):
+                        raise ValueError(f"Multiple deletion vectors for the same data file: {target_path}")
+                    self.dv_by_path[target_path] = (data_file, sequence_number)
             else:
-                # Index by partition
-                self._add_to_partition_group(pos_wrapper, partition_key)
+                pos_wrapper = PositionalDeleteFileWrapper(manifest_entry)
+
+                target_path = self.get_referenced_data_file(data_file)
+                if target_path:
+                    # Index by target file path
+                    self.pos_deletes_by_path.setdefault(target_path, PositionalDeletesGroup()).add(pos_wrapper)
+                else:
+                    # Index by partition
+                    self._add_to_partition_group(pos_wrapper, partition_key)
 
     def get_referenced_data_file(self, data_file: DataFile) -> Optional[str]:
         """Extract the target data file path from a position delete file."""
@@ -341,6 +352,14 @@ class DeleteFileIndex:
             if eq_group:
                 deletes.extend(eq_group.filter(seq, data_file))
 
+        # Check for deletion vector
+        dv = self._find_deletion_vector(seq, data_file)
+        if dv:
+            # If a deletion vector exists, use it and skip position deletes
+            deletes.append(dv)
+            return deletes
+
+        # Add position deletes (only if no deletion vector exists)
         # Global positional deletes (apply to all partitions)
         deletes.extend(self.global_pos_deletes.filter(seq, data_file))
 
@@ -357,3 +376,13 @@ class DeleteFileIndex:
             deletes.extend(self.pos_deletes_by_path[file_path].filter(seq, data_file))
 
         return deletes
+
+    def _find_deletion_vector(self, seq: int, data_file: DataFile) -> Optional[DataFile]:
+        """Find a deletion vector that applies to the given data file."""
+        file_path = data_file.file_path
+        dv_tuple = self.dv_by_path.get(file_path)
+
+        if dv_tuple and dv_tuple[1] >= seq:
+            return dv_tuple[0]
+
+        return None

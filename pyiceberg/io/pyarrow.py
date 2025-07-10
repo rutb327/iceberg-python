@@ -1492,7 +1492,13 @@ def _task_to_record_batches(
 def _read_all_delete_files(io: FileIO, tasks: Iterable[FileScanTask]) -> Dict[str, List[ChunkedArray]]:
     deletes_per_file: Dict[str, List[Union[pa.ChunkedArray, pa.Table]]] = {}
 
-    unique_deletes = {df for task in tasks for df in task.delete_files if df.content == DataFileContent.POSITION_DELETES}
+    # Position Deletes
+    unique_deletes = {
+        df
+        for task in tasks
+        for df in task.delete_files
+        if df.content == DataFileContent.POSITION_DELETES and df.file_format != FileFormat.PUFFIN
+    }
     if unique_deletes:
         executor = ExecutorFactory.get_or_create()
         deletes_per_files: Iterator[Dict[str, ChunkedArray]] = executor.map(
@@ -1505,7 +1511,25 @@ def _read_all_delete_files(io: FileIO, tasks: Iterable[FileScanTask]) -> Dict[st
                     deletes_per_file[file].append(arr)
                 else:
                     deletes_per_file[file] = [arr]
+    # Deletion Vectors
+    deletion_vectors = {
+        df
+        for task in tasks
+        for df in task.delete_files
+        if df.content == DataFileContent.POSITION_DELETES and df.file_format == FileFormat.PUFFIN
+    }
+    if deletion_vectors:
+        executor = ExecutorFactory.get_or_create()
+        dv_results = executor.map(
+            lambda args: _read_deletes(*args),
+            [(_fs_from_file_path(io, delete_file.file_path), delete_file) for delete_file in deletion_vectors],
+        )
+        for delete in dv_results:
+            for file, arr in delete.items():
+                # Deletion vectors replace all position deletes for a file
+                deletes_per_file[file] = [arr]
 
+    # Equality Deletes
     equality_delete_tasks = []
     for task in tasks:
         equality_deletes = [df for df in task.delete_files if df.content == DataFileContent.EQUALITY_DELETES]
