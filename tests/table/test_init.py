@@ -93,6 +93,7 @@ from pyiceberg.transforms import (
     BucketTransform,
     IdentityTransform,
 )
+from pyiceberg.typedef import Record
 from pyiceberg.types import (
     BinaryType,
     BooleanType,
@@ -1499,10 +1500,11 @@ def test_match_deletes_to_data_file_sequence_filtering() -> None:
         content=DataFileContent.DATA,
         file_path="s3://bucket/data.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=100,
         file_size_in_bytes=1000,
     )
+    data_file._spec_id = 0
 
     data_entry = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1544,10 +1546,11 @@ def test_match_deletes_to_data_file_partition_filtering() -> None:
         content=DataFileContent.DATA,
         file_path="s3://bucket/data.parquet",
         file_format=FileFormat.PARQUET,
-        partition={"bucket": 1},
+        partition=Record(1),
         record_count=100,
         file_size_in_bytes=1000,
     )
+    data_file._spec_id = 0
 
     data_entry = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1561,10 +1564,10 @@ def test_match_deletes_to_data_file_partition_filtering() -> None:
     delete_file_index.add_delete_file(global_delete, partition_key=None)
 
     same_partition_delete = create_equality_delete_entry(sequence_number=7, equality_ids=[1])
-    delete_file_index.add_delete_file(same_partition_delete, partition_key={"bucket": 1})
+    delete_file_index.add_delete_file(same_partition_delete, partition_key=Record(1))
 
     different_partition_delete = create_equality_delete_entry(sequence_number=8, equality_ids=[1])
-    delete_file_index.add_delete_file(different_partition_delete, partition_key={"bucket": 2})
+    delete_file_index.add_delete_file(different_partition_delete, partition_key=Record(2))
 
     result = _match_deletes_to_data_file(data_entry, delete_file_index)
 
@@ -1631,24 +1634,26 @@ def test_match_equality_deletes_statistics_filtering() -> None:
         content=DataFileContent.DATA,
         file_path="s3://bucket/data-all-nulls.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=100,
         file_size_in_bytes=1000,
         null_value_counts={1: 100},
         value_counts={1: 100},
     )
+    data_file_all_nulls._spec_id = 0
 
     delete_no_nulls_file = DataFile.from_args(
         content=DataFileContent.EQUALITY_DELETES,
         file_path="s3://bucket/eq-delete-no-nulls.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=10,
         file_size_in_bytes=100,
         equality_ids=[1],
         null_value_counts={1: 0},
         value_counts={1: 50},
     )
+    delete_no_nulls_file._spec_id = 0
 
     delete_no_nulls_entry = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1668,24 +1673,26 @@ def test_match_equality_deletes_statistics_filtering() -> None:
         content=DataFileContent.DATA,
         file_path="s3://bucket/data-no-nulls.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=100,
         file_size_in_bytes=1000,
         null_value_counts={1: 0},
         value_counts={1: 100},
     )
+    data_file_no_nulls._spec_id = 0
 
     delete_only_nulls_file = DataFile.from_args(
         content=DataFileContent.EQUALITY_DELETES,
         file_path="s3://bucket/eq-delete-only-nulls.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=10,
         file_size_in_bytes=100,
         equality_ids=[1],
         null_value_counts={1: 50},
         value_counts={1: 50},
     )
+    delete_only_nulls_file._spec_id = 0
 
     delete_only_nulls_entry = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1707,7 +1714,7 @@ def test_table_scan_integration_with_equality_deletes(table_v2: Table) -> None:
         content=DataFileContent.DATA,
         file_path="s3://bucket/data-scan.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=100,
         file_size_in_bytes=1000,
         lower_bounds={1: b"a", 2: b"100"},
@@ -1715,7 +1722,7 @@ def test_table_scan_integration_with_equality_deletes(table_v2: Table) -> None:
         value_counts={1: 100, 2: 100},
         null_value_counts={1: 0, 2: 0},
     )
-    data_file.spec_id = 1
+    data_file._spec_id = 1
 
     data_entry = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1727,7 +1734,7 @@ def test_table_scan_integration_with_equality_deletes(table_v2: Table) -> None:
         content=DataFileContent.EQUALITY_DELETES,
         file_path="s3://bucket/eq-delete-1.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=10,
         file_size_in_bytes=100,
         equality_ids=[1],
@@ -1736,6 +1743,7 @@ def test_table_scan_integration_with_equality_deletes(table_v2: Table) -> None:
         value_counts={1: 10},
         null_value_counts={1: 0},
     )
+    eq_delete_file_1._spec_id = 0
 
     eq_delete_entry_1 = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1747,7 +1755,7 @@ def test_table_scan_integration_with_equality_deletes(table_v2: Table) -> None:
         content=DataFileContent.EQUALITY_DELETES,
         file_path="s3://bucket/eq-delete-2.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=5,
         file_size_in_bytes=50,
         equality_ids=[2],
@@ -1756,6 +1764,7 @@ def test_table_scan_integration_with_equality_deletes(table_v2: Table) -> None:
         value_counts={2: 5},
         null_value_counts={2: 0},
     )
+    eq_delete_file_2._spec_id = 0
 
     eq_delete_entry_2 = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1785,7 +1794,7 @@ def test_table_scan_with_partitioned_equality_deletes(table_v2: Table) -> None:
     # Testing table scan with partitioned equality deletes
     from pyiceberg.table.delete_file_index import DeleteFileIndex, EqualityDeleteFileWrapper, EqualityDeletesGroup
 
-    partition_data = {"bucket": 1}
+    partition_data = Record(1)
     data_file = DataFile.from_args(
         content=DataFileContent.DATA,
         file_path="s3://bucket/partitioned-data.parquet",
@@ -1796,7 +1805,7 @@ def test_table_scan_with_partitioned_equality_deletes(table_v2: Table) -> None:
         value_counts={1: 100},
         null_value_counts={1: 0},
     )
-    data_file.spec_id = 1
+    data_file._spec_id = 1
 
     data_entry = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1805,19 +1814,16 @@ def test_table_scan_with_partitioned_equality_deletes(table_v2: Table) -> None:
     )
 
     global_eq_delete = create_equality_delete_entry(
-        sequence_number=6, equality_ids=[1], value_counts={1: 5}, null_value_counts={1: 0}
+        sequence_number=6, equality_ids=[1], value_counts={1: 5}, null_value_counts={1: 0}, spec_id=1
     )
-    global_eq_delete.data_file.spec_id = 1
 
     partition_eq_delete = create_equality_delete_entry(
-        sequence_number=7, equality_ids=[1], partition=partition_data, value_counts={1: 5}, null_value_counts={1: 0}
+        sequence_number=7, equality_ids=[1], partition=partition_data, value_counts={1: 5}, null_value_counts={1: 0}, spec_id=1
     )
-    partition_eq_delete.data_file.spec_id = 1
 
     different_partition_eq_delete = create_equality_delete_entry(
-        sequence_number=8, equality_ids=[1], partition={"bucket": 2}, value_counts={1: 5}, null_value_counts={1: 0}
+        sequence_number=8, equality_ids=[1], partition={"bucket": 2}, value_counts={1: 5}, null_value_counts={1: 0}, spec_id=1
     )
-    different_partition_eq_delete.data_file.spec_id = 1
 
     schema = Schema(NestedField(1, "field1", StringType(), required=False))
     delete_file_index = DeleteFileIndex(schema, {1: PartitionSpec()})
@@ -1829,7 +1835,7 @@ def test_table_scan_with_partitioned_equality_deletes(table_v2: Table) -> None:
     partition_group.add(EqualityDeleteFileWrapper(partition_eq_delete, schema))
 
     different_partition_group = delete_file_index.eq_deletes_by_partition.compute_if_absent(
-        spec_id, {"bucket": 2}, EqualityDeletesGroup
+        spec_id, Record(2), EqualityDeletesGroup
     )
     different_partition_group.add(EqualityDeleteFileWrapper(different_partition_eq_delete, schema))
 
@@ -1856,12 +1862,13 @@ def test_table_scan_sequence_number_filtering_integration() -> None:
         content=DataFileContent.DATA,
         file_path="s3://bucket/data-seq-test.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=100,
         file_size_in_bytes=1000,
         value_counts={1: 100},
         null_value_counts={1: 0},
     )
+    data_file._spec_id = 0
 
     data_entry = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1899,12 +1906,13 @@ def test_table_scan_mixed_delete_types_integration() -> None:
         content=DataFileContent.DATA,
         file_path="s3://bucket/mixed-deletes-data.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=100,
         file_size_in_bytes=1000,
         value_counts={1: 100},
         null_value_counts={1: 0},
     )
+    data_file._spec_id = 0
 
     data_entry = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,
@@ -1916,12 +1924,13 @@ def test_table_scan_mixed_delete_types_integration() -> None:
         content=DataFileContent.POSITION_DELETES,
         file_path="s3://bucket/pos-delete-mixed.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=10,
         file_size_in_bytes=100,
         lower_bounds={2147483546: b"s3://bucket/mixed-deletes-data.parquet"},
         upper_bounds={2147483546: b"s3://bucket/mixed-deletes-data.parquet"},
     )
+    pos_delete_file._spec_id = 0
 
     pos_delete_entry = ManifestEntry.from_args(
         status=ManifestEntryStatus.ADDED,

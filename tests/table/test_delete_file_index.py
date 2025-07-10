@@ -11,6 +11,7 @@ from pyiceberg.table.delete_file_index import (
     PositionalDeletesGroup,
 )
 from pyiceberg.transforms import IdentityTransform
+from pyiceberg.typedef import Record
 from pyiceberg.utils.partition_map import PartitionMap
 from tests.conftest import (
     create_basic_data_file,
@@ -217,18 +218,18 @@ class TestPartitionMap:
         """Test basic PartitionMap functionality"""
         partition_map: PartitionMap[str] = PartitionMap()
         # Test put and get
-        partition_map.put(0, {"year": 2023}, "value1")
-        assert partition_map.get(0, {"year": 2023}) == "value1"
+        partition_map.put(0, Record(2023), "value1")
+        assert partition_map.get(0, Record(2023)) == "value1"
 
         # Test with different partition key formats
-        partition_map.put(1, ["a", "b"], "value2")
-        assert partition_map.get(1, ["a", "b"]) == "value2"
-        assert partition_map.get(1, ("a", "b")) == "value2"
+        partition_map.put(1, Record("a", "b"), "value2")
+        assert partition_map.get(1, Record("a", "b")) == "value2"
+        assert partition_map.get(1, Record("a", "b")) == "value2"
 
         # Test  compute_if_absent
-        value = partition_map.compute_if_absent(2, {"month": "January"}, lambda: "value3")
+        value = partition_map.compute_if_absent(2, Record("January"), lambda: "value3")
         assert value == "value3"
-        assert partition_map.get(2, {"month": "January"}) == "value3"
+        assert partition_map.get(2, Record("January")) == "value3"
 
         # Test values and is_empty
         assert list(partition_map.values()) == ["value1", "value2", "value3"]
@@ -262,20 +263,20 @@ class TestDeleteFileIndex:
 
         # partition-specific delete
         partition_delete = create_equality_delete_entry(sequence_number=3, equality_ids=[1])
-        delete_index.add_delete_file(partition_delete, partition_key={"partition1": "value1"})
+        delete_index.add_delete_file(partition_delete, partition_key=Record("value1"))
 
         data_file = create_basic_data_file()
 
         # Query with seq=3 should get only global delete
-        result = delete_index.for_data_file(3, data_file, partition_key={"partition1": "value1"})
+        result = delete_index.for_data_file(3, data_file, partition_key=Record("value1"))
         assert len(result) == 1
 
         # Query with seq=2 should get both deletes
-        result = delete_index.for_data_file(2, data_file, partition_key={"partition1": "value1"})
+        result = delete_index.for_data_file(2, data_file, partition_key=Record("value1"))
         assert len(result) == 2
 
         # Query with seq=3 should get global delete for different partition
-        result = delete_index.for_data_file(3, data_file, partition_key={"partition2": "value2"})
+        result = delete_index.for_data_file(3, data_file, partition_key=Record("value2"))
         assert len(result) == 1
 
         # Query with seq=3 should get global delete for unpartitioned
@@ -323,24 +324,24 @@ class TestDeleteFileIndex:
 
         # Create a file-scoped delete
         file_scoped_delete = create_positional_delete_entry(sequence_number=5, file_path="s3://bucket/data.parquet")
-        delete_index.add_delete_file(file_scoped_delete, partition_key={"year": 2023})
+        delete_index.add_delete_file(file_scoped_delete, partition_key=Record(2023))
 
         # Create a partition-scoped delete
         partition_scoped_delete = create_partition_positional_delete_entry(sequence_number=3)
-        delete_index.add_delete_file(partition_scoped_delete, partition_key={"year": 2024})
+        delete_index.add_delete_file(partition_scoped_delete, partition_key=Record(2024))
 
         # Test file that matches the file-scoped delete
         target_file = create_basic_data_file(file_path="s3://bucket/data.parquet")
 
-        result = delete_index.for_data_file(5, target_file, partition_key={"year": 2023})
+        result = delete_index.for_data_file(5, target_file, partition_key=Record(2023))
         pos_deletes = [df for df in result if df.content == DataFileContent.POSITION_DELETES]
         assert len(pos_deletes) == 1  # file-scoped delete
 
-        result = delete_index.for_data_file(3, target_file, partition_key={"year": 2024})
+        result = delete_index.for_data_file(3, target_file, partition_key=Record(2024))
         pos_deletes = [df for df in result if df.content == DataFileContent.POSITION_DELETES]
         assert len(pos_deletes) == 2  # partition-scoped + file-scoped
 
-        result = delete_index.for_data_file(3, target_file, partition_key={"year": 2025})
+        result = delete_index.for_data_file(3, target_file, partition_key=Record(2025))
         pos_deletes = [df for df in result if df.content == DataFileContent.POSITION_DELETES]
         assert len(pos_deletes) == 1  # only file-scoped delete
 
@@ -349,7 +350,7 @@ class TestDeleteFileIndex:
         delete_index.add_delete_file(global_pos_delete, partition_key=None)
 
         partition_pos_delete = create_partition_positional_delete_entry(sequence_number=3)
-        partition_key_1 = {"bucket": 1}
+        partition_key_1 = Record(1)
         delete_index.add_delete_file(partition_pos_delete, partition_key=partition_key_1)
 
         data_file = create_basic_data_file(file_path="s3://bucket/data.parquet")
@@ -377,21 +378,21 @@ class TestDeleteFileIndex:
         unpartitioned_delete = create_equality_delete_entry(sequence_number=5, equality_ids=[1])
         unpartitioned_delete.data_file._spec_id = 0
 
-        delete_index.add_delete_file(unpartitioned_delete, partition_key={"bucket": 1})
+        delete_index.add_delete_file(unpartitioned_delete, partition_key=Record(1))
 
         partitioned_delete = create_equality_delete_entry(sequence_number=3, equality_ids=[1])
         partitioned_delete.data_file._spec_id = 1
 
-        delete_index.add_delete_file(partitioned_delete, partition_key={"bucket": 1})
+        delete_index.add_delete_file(partitioned_delete, partition_key=Record(1))
 
         data_file = create_basic_data_file()
 
         # Query with a different partition key should get only the unpartitioned delete
-        result = delete_index.for_data_file(4, data_file, partition_key={"bucket": 2})
+        result = delete_index.for_data_file(4, data_file, partition_key=Record(2))
         assert len(result) == 1  # Only the unpartitioned delete
 
         data_file._spec_id = 1
 
         # Query with the same partition key should get both deletes
-        result = delete_index.for_data_file(2, data_file, partition_key={"bucket": 1})
+        result = delete_index.for_data_file(2, data_file, partition_key=Record(1))
         assert len(result) == 2  # Both unpartitioned and partitioned deletes

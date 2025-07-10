@@ -1,11 +1,13 @@
 from bisect import bisect_left
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pyiceberg.conversions import from_bytes
 from pyiceberg.expressions import EqualTo
 from pyiceberg.expressions.visitors import _InclusiveMetricsEvaluator
 from pyiceberg.manifest import POSITIONAL_DELETE_SCHEMA, DataFile, DataFileContent, ManifestEntry
 from pyiceberg.partitioning import PartitionSpec
+from pyiceberg.schema import Schema
+from pyiceberg.typedef import Record
 from pyiceberg.types import NestedField
 from pyiceberg.utils.partition_map import PartitionMap
 
@@ -15,7 +17,7 @@ PATH_FIELD_ID = 2147483546
 class EqualityDeleteFileWrapper:
     """Stores the equality delete file along with the sequence number."""
 
-    def __init__(self, manifest_entry: ManifestEntry, schema: Any) -> None:
+    def __init__(self, manifest_entry: ManifestEntry, schema: Schema) -> None:
         self.delete_file = manifest_entry.data_file
         self.schema = schema
         self.apply_sequence_number = (manifest_entry.sequence_number or 0) - 1
@@ -231,7 +233,7 @@ class PositionalDeletesGroup(DeletesGroup):
 class DeleteFileIndex:
     """Main index that organizes delete files by partition for efficient lookup during scan planning."""
 
-    def __init__(self, table_schema: Any, partition_specs: Optional[Dict[int, PartitionSpec]] = None) -> None:
+    def __init__(self, table_schema: Schema, partition_specs: Optional[Dict[int, PartitionSpec]] = None) -> None:
         """Initialize a DeleteFileIndex."""
         self.table_schema = table_schema
         self.partition_specs = partition_specs or {}
@@ -247,7 +249,7 @@ class DeleteFileIndex:
         # Path-specific deletes
         self.pos_deletes_by_path: Dict[str, PositionalDeletesGroup] = {}
 
-    def add_delete_file(self, manifest_entry: ManifestEntry, partition_key: Optional[Any] = None) -> None:
+    def add_delete_file(self, manifest_entry: ManifestEntry, partition_key: Optional[Record] = None) -> None:
         """Add delete file to the appropriate partition group based on its type."""
         data_file = manifest_entry.data_file
 
@@ -262,7 +264,7 @@ class DeleteFileIndex:
             is_unpartitioned = False
 
             # Try to get spec_id if available
-            spec_id = getattr(data_file, "spec_id", None)
+            spec_id = data_file.spec_id
             if spec_id is not None and spec_id in self.partition_specs:
                 spec = self.partition_specs[spec_id]
                 # A spec is unpartitioned when it has no partition fields
@@ -302,7 +304,9 @@ class DeleteFileIndex:
 
         return None
 
-    def _add_to_partition_group(self, wrapper: Any, partition_key: Optional[Any]) -> None:
+    def _add_to_partition_group(
+        self, wrapper: Union[EqualityDeleteFileWrapper, PositionalDeleteFileWrapper], partition_key: Optional[Record]
+    ) -> None:
         """Add wrapper to the appropriate partition group based on wrapper type."""
         if partition_key is None:
             # Global deletes
@@ -313,7 +317,7 @@ class DeleteFileIndex:
             return
 
         # Get spec_id from the delete file if available, otherwise use default spec_id 0
-        spec_id = getattr(wrapper.delete_file, "spec_id", 0)
+        spec_id = wrapper.delete_file.spec_id
 
         # Add to partition-specific deletes
         if isinstance(wrapper, EqualityDeleteFileWrapper):
@@ -323,7 +327,7 @@ class DeleteFileIndex:
             group_pos = self.pos_deletes_by_partition.compute_if_absent(spec_id, partition_key, lambda: PositionalDeletesGroup())
             group_pos.add(wrapper)
 
-    def for_data_file(self, seq: int, data_file: DataFile, partition_key: Optional[Any] = None) -> List[DataFile]:
+    def for_data_file(self, seq: int, data_file: DataFile, partition_key: Optional[Record] = None) -> List[DataFile]:
         """Find all delete files that apply to the given data file."""
         deletes = []
 
@@ -332,7 +336,7 @@ class DeleteFileIndex:
 
         # Partition-specific equality deletes
         if partition_key is not None:
-            spec_id = getattr(data_file, "spec_id", 0)
+            spec_id = data_file.spec_id
             eq_group = self.eq_deletes_by_partition.get(spec_id, partition_key)
             if eq_group:
                 deletes.extend(eq_group.filter(seq, data_file))
@@ -342,7 +346,7 @@ class DeleteFileIndex:
 
         # Partition-specific positional deletes
         if partition_key is not None:
-            spec_id = getattr(data_file, "spec_id", 0)
+            spec_id = data_file.spec_id
             pos_group = self.pos_deletes_by_partition.get(spec_id, partition_key)
             if pos_group:
                 deletes.extend(pos_group.filter(seq, data_file))

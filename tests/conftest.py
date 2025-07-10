@@ -65,6 +65,7 @@ from pyiceberg.schema import Accessor, Schema
 from pyiceberg.serializers import ToOutputFile
 from pyiceberg.table import FileScanTask, Table
 from pyiceberg.table.metadata import TableMetadataV1, TableMetadataV2
+from pyiceberg.typedef import Record
 from pyiceberg.types import (
     BinaryType,
     BooleanType,
@@ -2845,18 +2846,19 @@ def pyarrow_table_with_promoted_types(pyarrow_schema_with_promoted_types: "pa.Sc
 def create_equality_delete_entry(
     sequence_number: int = 1,
     equality_ids: Optional[List[int]] = None,
-    partition: Optional[Dict[str, Any]] = None,
+    partition: Optional[Record] = None,
     value_counts: Optional[Dict[int, int]] = None,
     null_value_counts: Optional[Dict[int, int]] = None,
     lower_bounds: Optional[Dict[int, bytes]] = None,
     upper_bounds: Optional[Dict[int, bytes]] = None,
+    spec_id: int = 0,
 ) -> ManifestEntry:
-    # Helper to create equality deletes
+    partition_record = partition
     delete_file = DataFile.from_args(
         content=DataFileContent.EQUALITY_DELETES,
         file_path=f"s3://bucket/eq-delete-{sequence_number}.parquet",
         file_format=FileFormat.PARQUET,
-        partition=partition or {},
+        partition=partition_record,
         record_count=10,
         file_size_in_bytes=100,
         equality_ids=equality_ids or [1],
@@ -2865,35 +2867,40 @@ def create_equality_delete_entry(
         lower_bounds=lower_bounds,
         upper_bounds=upper_bounds,
     )
+    delete_file._spec_id = spec_id
 
     return ManifestEntry.from_args(status=ManifestEntryStatus.ADDED, sequence_number=sequence_number, data_file=delete_file)
 
 
-def create_positional_delete_entry(sequence_number: int = 1, file_path: str = "s3://bucket/data.parquet") -> ManifestEntry:
+def create_positional_delete_entry(
+    sequence_number: int = 1, file_path: str = "s3://bucket/data.parquet", spec_id: int = 0
+) -> ManifestEntry:
     delete_file = DataFile.from_args(
         content=DataFileContent.POSITION_DELETES,
         file_path=f"s3://bucket/pos-delete-{sequence_number}.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=10,
         file_size_in_bytes=100,
         lower_bounds={2147483546: file_path.encode()},
         upper_bounds={2147483546: file_path.encode()},
     )
+    delete_file._spec_id = spec_id
 
     return ManifestEntry.from_args(status=ManifestEntryStatus.ADDED, sequence_number=sequence_number, data_file=delete_file)
 
 
-def create_partition_positional_delete_entry(sequence_number: int = 1) -> ManifestEntry:
+def create_partition_positional_delete_entry(sequence_number: int = 1, spec_id: int = 0) -> ManifestEntry:
     delete_file = DataFile.from_args(
         content=DataFileContent.POSITION_DELETES,
         file_path=f"s3://bucket/pos-delete-{sequence_number}.parquet",
         file_format=FileFormat.PARQUET,
-        partition={},
+        partition=Record(),
         record_count=10,
         file_size_in_bytes=100,
         # No lower_bounds/upper_bounds = partition-scoped delete
     )
+    delete_file._spec_id = spec_id
 
     return ManifestEntry.from_args(status=ManifestEntryStatus.ADDED, sequence_number=sequence_number, data_file=delete_file)
 
@@ -2917,19 +2924,21 @@ def create_basic_equality_delete_file(
     file_path: str = "s3://bucket/eq-delete.parquet",
     equality_ids: Optional[List[int]] = None,
     sequence_number: int = 1,
-    partition: Optional[Dict[str, Any]] = None,
+    partition: Optional[Record] = None,
     record_count: int = 5,
     file_size_in_bytes: int = 50,
     lower_bounds: Optional[Dict[int, Any]] = None,
     upper_bounds: Optional[Dict[int, Any]] = None,
     value_counts: Optional[Dict[int, Any]] = None,
     null_value_counts: Optional[Dict[int, Any]] = None,
+    spec_id: int = 0,
 ) -> DataFile:
-    return DataFile.from_args(
+    partition_record = partition
+    data_file = DataFile.from_args(
         content=DataFileContent.EQUALITY_DELETES,
         file_path=file_path,
         file_format=FileFormat.PARQUET,
-        partition=partition or {},
+        partition=partition_record,
         record_count=record_count,
         file_size_in_bytes=file_size_in_bytes,
         equality_ids=equality_ids or [1],
@@ -2938,6 +2947,8 @@ def create_basic_equality_delete_file(
         value_counts=value_counts,
         null_value_counts=null_value_counts,
     )
+    data_file._spec_id = spec_id
+    return data_file
 
 
 def create_basic_data_file(
@@ -2949,17 +2960,18 @@ def create_basic_data_file(
     upper_bounds: Optional[Dict[int, Any]] = None,
     value_counts: Optional[Dict[int, Any]] = None,
     null_value_counts: Optional[Dict[int, Any]] = None,
+    spec_id: int = 0,
 ) -> DataFile:
     # Set default value counts and null value counts if not provided
     if value_counts is None and null_value_counts is None:
         value_counts = {1: record_count, 2: record_count}
         null_value_counts = {1: 0, 2: 0}
 
-    return DataFile.from_args(
+    data_file = DataFile.from_args(
         content=DataFileContent.DATA,
         file_path=file_path,
         file_format=FileFormat.PARQUET,
-        partition=partition or {},
+        partition=Record(*partition.values()) if partition else Record(),
         record_count=record_count,
         file_size_in_bytes=file_size_in_bytes,
         lower_bounds=lower_bounds,
@@ -2967,6 +2979,8 @@ def create_basic_data_file(
         value_counts=value_counts,
         null_value_counts=null_value_counts,
     )
+    data_file._spec_id = spec_id
+    return data_file
 
 
 def create_manifest_entry_with_delete_file(
