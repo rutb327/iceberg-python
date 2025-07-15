@@ -23,15 +23,18 @@ class EqualityDeleteFileWrapper:
         self.apply_sequence_number = (manifest_entry.sequence_number or 0) - 1
         self._converted_lower_bounds: Optional[Dict[int, Any]] = None
         self._converted_upper_bounds: Optional[Dict[int, Any]] = None
+        self._equality_fields: Optional[List[NestedField]] = None
 
     def equality_fields(self) -> List[NestedField]:
         """Get equality fields for current delete file."""
-        fields = []
-        for field_id in self.delete_file.equality_ids or []:
-            field = self.schema.find_field(field_id)
-            if field:
-                fields.append(field)
-        return fields
+        if self._equality_fields is None:
+            fields = []
+            for field_id in self.delete_file.equality_ids or []:
+                field = self.schema.find_field(field_id)
+                if field:
+                    fields.append(field)
+            self._equality_fields = fields
+        return self._equality_fields
 
     def lower_bound(self, field_id: int) -> Optional[Any]:
         """Convert or get lower bound for a field."""
@@ -240,7 +243,6 @@ class DeleteFileIndex:
 
         # Global deletes
         self.global_eq_deletes = EqualityDeletesGroup()
-        self.global_pos_deletes = PositionalDeletesGroup()
 
         # Partition-specific deletes
         self.eq_deletes_by_partition: PartitionMap[EqualityDeletesGroup] = PartitionMap(self.partition_specs)
@@ -263,13 +265,12 @@ class DeleteFileIndex:
 
             # Check if the partition spec is unpartitioned
             is_unpartitioned = False
+            spec_id = data_file.spec_id or 0
 
-            # Try to get spec_id if available
-            spec_id = data_file.spec_id
-            if spec_id is not None and spec_id in self.partition_specs:
+            if spec_id in self.partition_specs:
                 spec = self.partition_specs[spec_id]
                 # A spec is unpartitioned when it has no partition fields
-                is_unpartitioned = len(spec.fields) == 0
+                is_unpartitioned = spec.is_unpartitioned()
 
             if is_unpartitioned:
                 # If the spec is unpartitioned, add to global deletes
@@ -324,11 +325,13 @@ class DeleteFileIndex:
             if isinstance(wrapper, EqualityDeleteFileWrapper):
                 self.global_eq_deletes.add(wrapper)
             else:
-                self.global_pos_deletes.add(wrapper)
+                spec_id = wrapper.delete_file.spec_id or 0
+                group_pos = self.pos_deletes_by_partition.compute_if_absent(spec_id, None, lambda: PositionalDeletesGroup())
+                group_pos.add(wrapper)
             return
 
         # Get spec_id from the delete file if available, otherwise use default spec_id 0
-        spec_id = wrapper.delete_file.spec_id
+        spec_id = wrapper.delete_file.spec_id or 0
 
         # Add to partition-specific deletes
         if isinstance(wrapper, EqualityDeleteFileWrapper):
@@ -346,8 +349,8 @@ class DeleteFileIndex:
         deletes.extend(self.global_eq_deletes.filter(seq, data_file))
 
         # Partition-specific equality deletes
+        spec_id = data_file.spec_id or 0
         if partition_key is not None:
-            spec_id = data_file.spec_id
             eq_group = self.eq_deletes_by_partition.get(spec_id, partition_key)
             if eq_group:
                 deletes.extend(eq_group.filter(seq, data_file))
@@ -360,12 +363,13 @@ class DeleteFileIndex:
             return deletes
 
         # Add position deletes (only if no deletion vector exists)
-        # Global positional deletes (apply to all partitions)
-        deletes.extend(self.global_pos_deletes.filter(seq, data_file))
+        # Check for unpartitioned position deletes
+        unpart_pos_group = self.pos_deletes_by_partition.get(spec_id, None)
+        if unpart_pos_group:
+            deletes.extend(unpart_pos_group.filter(seq, data_file))
 
-        # Partition-specific positional deletes
+        # Check for partition-specific position deletes
         if partition_key is not None:
-            spec_id = data_file.spec_id
             pos_group = self.pos_deletes_by_partition.get(spec_id, partition_key)
             if pos_group:
                 deletes.extend(pos_group.filter(seq, data_file))
@@ -382,7 +386,12 @@ class DeleteFileIndex:
         file_path = data_file.file_path
         dv_tuple = self.dv_by_path.get(file_path)
 
-        if dv_tuple and dv_tuple[1] >= seq:
-            return dv_tuple[0]
+        if dv_tuple:
+            dv, dv_seq = dv_tuple
+            if dv_seq < seq:
+                raise ValueError(
+                    f"Deletion Vector sequence number ({dv_seq}) must be greater than or equal to data file sequence number ({seq})"
+                )
+            return dv
 
         return None

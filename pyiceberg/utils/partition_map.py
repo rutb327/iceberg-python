@@ -18,11 +18,16 @@ class PartitionMap(Generic[T]):
 
     def put(self, spec_id: int, partition: Optional[Record], value: T) -> None:
         """Put a value by spec ID and partition."""
+        if spec_id not in self._specs_by_id:
+            raise ValueError(f"Cannot find spec with ID {spec_id}: {self._specs_by_id}")
         key = self._make_key(spec_id, partition)
         self._map[key] = value
 
     def compute_if_absent(self, spec_id: int, partition: Optional[Record], factory: Callable[[], T]) -> T:
         """Get a value by spec ID and partition, creating it if it doesn't exist."""
+        if spec_id not in self._specs_by_id:
+            raise ValueError(f"Cannot find spec with ID {spec_id}: {self._specs_by_id}")
+
         key = self._make_key(spec_id, partition)
         if key not in self._map:
             self._map[key] = factory()
@@ -34,7 +39,7 @@ class PartitionMap(Generic[T]):
             partition_values = ()
         else:
             partition_values = tuple(partition._data)
-        return (spec_id, partition_values)
+        return spec_id, partition_values
 
     def values(self) -> Iterator[T]:
         """Get all values in the map."""
