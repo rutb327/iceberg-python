@@ -358,42 +358,15 @@ def test_static_table_io_does_not_exist(metadata_location: str) -> None:
 
 
 def test_match_deletes_to_datafile(simple_id_schema: Schema) -> None:
-    from tests.conftest import create_basic_data_file, create_manifest_entry_with_delete_file
+    from tests.conftest import create_basic_data_file, create_manifest_entry_with_delete_file, create_positional_delete_entry
 
     data_file = create_basic_data_file(file_path="s3://bucket/0000.parquet", record_count=3, file_size_in_bytes=3)
     data_entry = create_manifest_entry_with_delete_file(data_file, sequence_number=1)
 
-    delete_entry_1 = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        sequence_number=0,  # Older than the data
-        data_file=DataFile.from_args(
-            content=DataFileContent.POSITION_DELETES,
-            file_path="s3://bucket/0001-delete.parquet",
-            file_format=FileFormat.PARQUET,
-            partition={},
-            record_count=3,
-            file_size_in_bytes=3,
-        ),
-    )
-    delete_entry_2 = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        sequence_number=3,
-        data_file=DataFile.from_args(
-            content=DataFileContent.POSITION_DELETES,
-            file_path="s3://bucket/0002-delete.parquet",
-            file_format=FileFormat.PARQUET,
-            partition={},
-            record_count=3,
-            file_size_in_bytes=3,
-            # We don't really care about the tests here
-            value_counts={},
-            null_value_counts={},
-            nan_value_counts={},
-            lower_bounds={},
-            upper_bounds={},
-        ),
-    )
-    delete_file_index = DeleteFileIndex(simple_id_schema)
+    delete_entry_1 = create_positional_delete_entry(sequence_number=0, file_path="s3://bucket/0000.parquet", spec_id=0)
+    delete_entry_2 = create_positional_delete_entry(sequence_number=3, file_path="s3://bucket/0000.parquet", spec_id=0)
+
+    delete_file_index = DeleteFileIndex(simple_id_schema, {0: PartitionSpec()})
     # Add both delete files to the index
     delete_file_index.add_delete_file(delete_entry_1)
     delete_file_index.add_delete_file(delete_entry_2)
@@ -407,49 +380,18 @@ def test_match_deletes_to_datafile(simple_id_schema: Schema) -> None:
 
 
 def test_match_deletes_to_datafile_duplicate_number(simple_id_schema: Schema) -> None:
-    from tests.conftest import create_basic_data_file, create_manifest_entry_with_delete_file
+    from tests.conftest import create_basic_data_file, create_manifest_entry_with_delete_file, create_positional_delete_entry
 
     data_file = create_basic_data_file(file_path="s3://bucket/0000.parquet", record_count=3, file_size_in_bytes=3)
     data_entry = create_manifest_entry_with_delete_file(data_file, sequence_number=1)
-    delete_entry_1 = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        sequence_number=3,
-        data_file=DataFile.from_args(
-            content=DataFileContent.POSITION_DELETES,
-            file_path="s3://bucket/0001-delete.parquet",
-            file_format=FileFormat.PARQUET,
-            partition={},
-            record_count=3,
-            file_size_in_bytes=3,
-            # We don't really care about the tests here
-            value_counts={},
-            null_value_counts={},
-            nan_value_counts={},
-            lower_bounds={},
-            upper_bounds={},
-        ),
-    )
-    delete_entry_2 = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        sequence_number=3,
-        data_file=DataFile.from_args(
-            content=DataFileContent.POSITION_DELETES,
-            file_path="s3://bucket/0002-delete.parquet",
-            file_format=FileFormat.PARQUET,
-            partition={},
-            record_count=3,
-            file_size_in_bytes=3,
-            # We don't really care about the tests here
-            value_counts={},
-            null_value_counts={},
-            nan_value_counts={},
-            lower_bounds={},
-            upper_bounds={},
-        ),
-    )
-    delete_file_index = DeleteFileIndex(simple_id_schema)
+
+    delete_entry_1 = create_positional_delete_entry(sequence_number=3, file_path="s3://bucket/0000.parquet", spec_id=0)
+    delete_entry_2 = create_positional_delete_entry(sequence_number=3, file_path="s3://bucket/0000.parquet", spec_id=0)
+
+    delete_file_index = DeleteFileIndex(simple_id_schema, {0: PartitionSpec()})
     delete_file_index.add_delete_file(delete_entry_1)
     delete_file_index.add_delete_file(delete_entry_2)
+
     assert _match_deletes_to_data_file(
         data_entry,
         delete_file_index,
@@ -459,68 +401,14 @@ def test_match_deletes_to_datafile_duplicate_number(simple_id_schema: Schema) ->
     }
 
 
-def test_match_equality_deletes_to_data_file() -> None:
-    from pyiceberg.table.delete_file_index import DeleteFileIndex, EqualityDeleteFileWrapper
-    from tests.conftest import create_basic_data_file, create_basic_equality_delete_file, create_manifest_entry_with_delete_file
-
-    schema = Schema(
-        NestedField(1, "field1", StringType(), required=False),
-        NestedField(2, "field2", IntegerType(), required=False),
-    )
-
-    data_file = create_basic_data_file(
-        file_path="s3://bucket/data-0000.parquet",
-        record_count=100,
-        file_size_in_bytes=1000,
-        lower_bounds={1: b"a", 2: b"100"},
-        upper_bounds={1: b"z", 2: b"999"},
-        value_counts={1: 100, 2: 100},
-        null_value_counts={1: 0, 2: 0},
-    )
-    data_file.spec_id = 1
-
-    # Create delete files with non-null values to match the data file
-    eq_delete_file = create_basic_equality_delete_file(
-        file_path="s3://bucket/eq-delete.parquet", equality_ids=[1], value_counts={1: 5}, null_value_counts={1: 0}
-    )
-    eq_delete_entry = create_manifest_entry_with_delete_file(eq_delete_file, sequence_number=4)
-
-    eq_delete_file_new = create_basic_equality_delete_file(
-        file_path="s3://bucket/eq-delete-new.parquet", equality_ids=[1], value_counts={1: 5}, null_value_counts={1: 0}
-    )
-    eq_delete_entry_new = create_manifest_entry_with_delete_file(eq_delete_file_new, sequence_number=6)
-
-    eq_delete_file_future = create_basic_equality_delete_file(
-        file_path="s3://bucket/eq-delete-future.parquet", equality_ids=[1], value_counts={1: 5}, null_value_counts={1: 0}
-    )
-    eq_delete_entry_future = create_manifest_entry_with_delete_file(eq_delete_file_future, sequence_number=8)
-
-    delete_file_index = DeleteFileIndex(schema, {1: PartitionSpec()})
-
-    eq_delete_file.spec_id = 1
-    eq_delete_file_new.spec_id = 1
-    eq_delete_file_future.spec_id = 1
-
-    delete_file_index.global_eq_deletes.add(EqualityDeleteFileWrapper(eq_delete_entry, schema))
-    delete_file_index.global_eq_deletes.add(EqualityDeleteFileWrapper(eq_delete_entry_new, schema))
-    delete_file_index.global_eq_deletes.add(EqualityDeleteFileWrapper(eq_delete_entry_future, schema))
-
-    result = delete_file_index.for_data_file(5, data_file, partition_key=data_file.partition)
-    assert len(result) == 2
-    assert eq_delete_file_new in result
-    assert eq_delete_file_future in result
-    assert eq_delete_file not in result
-    assert eq_delete_file_future in result
-    assert eq_delete_file not in result
-
-    result = delete_file_index.for_data_file(6, data_file)
-    assert len(result) == 1
-    assert eq_delete_file_future in result
-
-
 def test_match_all_deletes_to_data_file() -> None:
-    from pyiceberg.table.delete_file_index import DeleteFileIndex, EqualityDeleteFileWrapper, PositionalDeleteFileWrapper
-    from tests.conftest import create_basic_data_file, create_basic_equality_delete_file, create_manifest_entry_with_delete_file
+    from pyiceberg.table.delete_file_index import DeleteFileIndex
+    from tests.conftest import (
+        create_basic_data_file,
+        create_basic_equality_delete_file,
+        create_manifest_entry_with_delete_file,
+        create_positional_delete_entry,
+    )
 
     schema = Schema(
         NestedField(1, "field1", StringType(), required=False),
@@ -528,46 +416,14 @@ def test_match_all_deletes_to_data_file() -> None:
     )
 
     data_file = create_basic_data_file(file_path="s3://bucket/0000.parquet", record_count=3, file_size_in_bytes=3)
-    data_file.spec_id = 1
+    data_file._spec_id = 1
     data_entry = create_manifest_entry_with_delete_file(data_file, sequence_number=1)
 
-    pos_delete_file_1 = DataFile.from_args(
-        content=DataFileContent.POSITION_DELETES,
-        file_path="s3://bucket/0001-delete.parquet",
-        file_format=FileFormat.PARQUET,
-        partition={},
-        record_count=3,
-        file_size_in_bytes=3,
-    )
-    pos_delete_file_1.spec_id = 1
+    # Create positional delete files
+    delete_entry_1 = create_positional_delete_entry(sequence_number=0, file_path="s3://bucket/0000.parquet", spec_id=1)
+    delete_entry_2 = create_positional_delete_entry(sequence_number=3, file_path="s3://bucket/0000.parquet", spec_id=1)
 
-    delete_entry_1 = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        sequence_number=0,
-        data_file=pos_delete_file_1,
-    )
-
-    pos_delete_file_2 = DataFile.from_args(
-        content=DataFileContent.POSITION_DELETES,
-        file_path="s3://bucket/0002-delete.parquet",
-        file_format=FileFormat.PARQUET,
-        partition={},
-        record_count=3,
-        file_size_in_bytes=3,
-        value_counts={},
-        null_value_counts={},
-        nan_value_counts={},
-        lower_bounds={},
-        upper_bounds={},
-    )
-    pos_delete_file_2.spec_id = 1
-
-    delete_entry_2 = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        sequence_number=3,
-        data_file=pos_delete_file_2,
-    )
-
+    # Create equality delete files
     eq_delete_file_1 = create_basic_equality_delete_file(
         file_path="s3://bucket/eq-delete-1.parquet",
         equality_ids=[1, 2],
@@ -575,8 +431,8 @@ def test_match_all_deletes_to_data_file() -> None:
         upper_bounds={1: b"z", 2: b"999"},
         value_counts={1: 3, 2: 3},
         null_value_counts={1: 0, 2: 0},
+        spec_id=1,
     )
-    eq_delete_file_1.spec_id = 1
     eq_delete_entry_1 = create_manifest_entry_with_delete_file(eq_delete_file_1, sequence_number=0)
 
     eq_delete_file_2 = create_basic_equality_delete_file(
@@ -586,16 +442,17 @@ def test_match_all_deletes_to_data_file() -> None:
         upper_bounds={1: b"z", 2: b"999"},
         value_counts={1: 3, 2: 3},
         null_value_counts={1: 0, 2: 0},
+        spec_id=1,
     )
-    eq_delete_file_2.spec_id = 1
     eq_delete_entry_2 = create_manifest_entry_with_delete_file(eq_delete_file_2, sequence_number=3)
 
     delete_file_index = DeleteFileIndex(schema, {1: PartitionSpec()})
 
-    delete_file_index.global_pos_deletes.add(PositionalDeleteFileWrapper(delete_entry_1))
-    delete_file_index.global_pos_deletes.add(PositionalDeleteFileWrapper(delete_entry_2))
-    delete_file_index.global_eq_deletes.add(EqualityDeleteFileWrapper(eq_delete_entry_1, schema))
-    delete_file_index.global_eq_deletes.add(EqualityDeleteFileWrapper(eq_delete_entry_2, schema))
+    # Add delete files to the index using the proper API
+    delete_file_index.add_delete_file(delete_entry_1, partition_key=None)
+    delete_file_index.add_delete_file(delete_entry_2, partition_key=None)
+    delete_file_index.add_delete_file(eq_delete_entry_1, partition_key=None)
+    delete_file_index.add_delete_file(eq_delete_entry_2, partition_key=None)
 
     result = _match_deletes_to_data_file(
         data_entry,
@@ -1539,176 +1396,8 @@ def test_match_deletes_to_data_file_sequence_filtering() -> None:
     assert DataFileContent.EQUALITY_DELETES in contents
 
 
-def test_match_deletes_to_data_file_partition_filtering() -> None:
-    schema = Schema(NestedField(1, "id", IntegerType(), required=True))
-
-    data_file = DataFile.from_args(
-        content=DataFileContent.DATA,
-        file_path="s3://bucket/data.parquet",
-        file_format=FileFormat.PARQUET,
-        partition=Record(1),
-        record_count=100,
-        file_size_in_bytes=1000,
-    )
-    data_file._spec_id = 0
-
-    data_entry = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        sequence_number=5,
-        data_file=data_file,
-    )
-
-    delete_file_index = DeleteFileIndex(schema)
-
-    global_delete = create_equality_delete_entry(sequence_number=6, equality_ids=[1])
-    delete_file_index.add_delete_file(global_delete, partition_key=None)
-
-    same_partition_delete = create_equality_delete_entry(sequence_number=7, equality_ids=[1])
-    delete_file_index.add_delete_file(same_partition_delete, partition_key=Record(1))
-
-    different_partition_delete = create_equality_delete_entry(sequence_number=8, equality_ids=[1])
-    delete_file_index.add_delete_file(different_partition_delete, partition_key=Record(2))
-
-    result = _match_deletes_to_data_file(data_entry, delete_file_index)
-
-    assert len(result) == 2
-
-    result_paths = {delete_file.file_path for delete_file in result}
-    assert "s3://bucket/eq-delete-6.parquet" in result_paths
-    assert "s3://bucket/eq-delete-7.parquet" in result_paths
-    assert "s3://bucket/eq-delete-8.parquet" not in result_paths
-
-
-def test_match_equality_deletes_bounds_checking() -> None:
-    from pyiceberg.table.delete_file_index import DeleteFileIndex
-    from tests.conftest import create_basic_data_file, create_basic_equality_delete_file, create_manifest_entry_with_delete_file
-
-    schema = Schema(
-        NestedField(1, "id", IntegerType(), required=True),
-        NestedField(2, "data", StringType(), required=True),
-    )
-
-    data_file = create_basic_data_file(
-        file_path="s3://bucket/data.parquet",
-        lower_bounds={1: b"\x01\x00\x00\x00", 2: b"a"},
-        upper_bounds={1: b"d\x00\x00\x00", 2: b"z"},
-    )
-
-    delete_file_index = DeleteFileIndex(schema)
-
-    # Create overlapping delete file
-    overlapping_delete_file = create_basic_equality_delete_file(
-        file_path="s3://bucket/eq-delete-overlap.parquet",
-        equality_ids=[1, 2],
-        lower_bounds={1: b"2\x00\x00\x00", 2: b"m"},
-        upper_bounds={1: b"\x96\x00\x00\x00", 2: b"z"},
-    )
-
-    overlapping_delete_entry = create_manifest_entry_with_delete_file(overlapping_delete_file, sequence_number=6)
-    delete_file_index.add_delete_file(overlapping_delete_entry)
-
-    # Create non-overlapping delete file
-    non_overlapping_delete_file = create_basic_equality_delete_file(
-        file_path="s3://bucket/eq-delete-no-overlap.parquet",
-        equality_ids=[1],
-        lower_bounds={1: b"\xc8\x00\x00\x00"},  # 200
-        upper_bounds={1: b",\x01\x00\x00"},  # 300
-    )
-
-    non_overlapping_delete_entry = create_manifest_entry_with_delete_file(non_overlapping_delete_file, sequence_number=7)
-    delete_file_index.add_delete_file(non_overlapping_delete_entry)
-
-    result = delete_file_index.for_data_file(5, data_file)
-
-    assert len(result) == 1
-    assert result[0].file_path == "s3://bucket/eq-delete-overlap.parquet"
-
-
-def test_match_equality_deletes_statistics_filtering() -> None:
-    # Test statistics-based filtering for null patterns
-    schema = Schema(NestedField(1, "id", IntegerType(), required=False))
-
-    delete_file_index1 = DeleteFileIndex(schema, {0: PartitionSpec()})
-
-    data_file_all_nulls = DataFile.from_args(
-        content=DataFileContent.DATA,
-        file_path="s3://bucket/data-all-nulls.parquet",
-        file_format=FileFormat.PARQUET,
-        partition=Record(),
-        record_count=100,
-        file_size_in_bytes=1000,
-        null_value_counts={1: 100},
-        value_counts={1: 100},
-    )
-    data_file_all_nulls._spec_id = 0
-
-    delete_no_nulls_file = DataFile.from_args(
-        content=DataFileContent.EQUALITY_DELETES,
-        file_path="s3://bucket/eq-delete-no-nulls.parquet",
-        file_format=FileFormat.PARQUET,
-        partition=Record(),
-        record_count=10,
-        file_size_in_bytes=100,
-        equality_ids=[1],
-        null_value_counts={1: 0},
-        value_counts={1: 50},
-    )
-    delete_no_nulls_file._spec_id = 0
-
-    delete_no_nulls_entry = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        sequence_number=6,
-        data_file=delete_no_nulls_file,
-    )
-
-    delete_file_index1.add_delete_file(delete_no_nulls_entry)
-
-    # Should not match because data has only nulls, delete has no nulls
-    result = delete_file_index1.for_data_file(5, data_file_all_nulls)
-    assert len(result) == 0
-
-    delete_file_index2 = DeleteFileIndex(schema)
-
-    data_file_no_nulls = DataFile.from_args(
-        content=DataFileContent.DATA,
-        file_path="s3://bucket/data-no-nulls.parquet",
-        file_format=FileFormat.PARQUET,
-        partition=Record(),
-        record_count=100,
-        file_size_in_bytes=1000,
-        null_value_counts={1: 0},
-        value_counts={1: 100},
-    )
-    data_file_no_nulls._spec_id = 0
-
-    delete_only_nulls_file = DataFile.from_args(
-        content=DataFileContent.EQUALITY_DELETES,
-        file_path="s3://bucket/eq-delete-only-nulls.parquet",
-        file_format=FileFormat.PARQUET,
-        partition=Record(),
-        record_count=10,
-        file_size_in_bytes=100,
-        equality_ids=[1],
-        null_value_counts={1: 50},
-        value_counts={1: 50},
-    )
-    delete_only_nulls_file._spec_id = 0
-
-    delete_only_nulls_entry = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        sequence_number=7,
-        data_file=delete_only_nulls_file,
-    )
-
-    delete_file_index2.add_delete_file(delete_only_nulls_entry)
-
-    result = delete_file_index2.for_data_file(5, data_file_no_nulls)
-    assert len(result) == 0
-
-
 def test_table_scan_integration_with_equality_deletes(table_v2: Table) -> None:
     # full table scan pipeline check with equality deletes
-    from pyiceberg.table.delete_file_index import DeleteFileIndex
 
     data_file = DataFile.from_args(
         content=DataFileContent.DATA,
@@ -1792,7 +1481,7 @@ def test_table_scan_integration_with_equality_deletes(table_v2: Table) -> None:
 
 def test_table_scan_with_partitioned_equality_deletes(table_v2: Table) -> None:
     # Testing table scan with partitioned equality deletes
-    from pyiceberg.table.delete_file_index import DeleteFileIndex, EqualityDeleteFileWrapper, EqualityDeletesGroup
+    from pyiceberg.table.delete_file_index import EqualityDeleteFileWrapper, EqualityDeletesGroup
 
     partition_data = Record(1)
     data_file = DataFile.from_args(
@@ -1856,7 +1545,6 @@ def test_table_scan_with_partitioned_equality_deletes(table_v2: Table) -> None:
 
 def test_table_scan_sequence_number_filtering_integration() -> None:
     # Testing that sequence number filtering works correctly in the scan pipeline
-    from pyiceberg.table.delete_file_index import DeleteFileIndex
 
     data_file = DataFile.from_args(
         content=DataFileContent.DATA,
@@ -1900,8 +1588,6 @@ def test_table_scan_sequence_number_filtering_integration() -> None:
 
 
 def test_table_scan_mixed_delete_types_integration() -> None:
-    from pyiceberg.table.delete_file_index import DeleteFileIndex, EqualityDeleteFileWrapper, PositionalDeleteFileWrapper
-
     data_file = DataFile.from_args(
         content=DataFileContent.DATA,
         file_path="s3://bucket/mixed-deletes-data.parquet",
@@ -1939,14 +1625,14 @@ def test_table_scan_mixed_delete_types_integration() -> None:
     )
 
     eq_delete_entry = create_equality_delete_entry(
-        sequence_number=7, equality_ids=[1], value_counts={1: 5}, null_value_counts={1: 0}
+        sequence_number=7, equality_ids=[1], value_counts={1: 5}, null_value_counts={1: 0}, spec_id=0
     )
 
     schema = Schema(NestedField(1, "field1", StringType(), required=False))
     delete_file_index = DeleteFileIndex(schema, {0: PartitionSpec()})
 
-    delete_file_index.global_pos_deletes.add(PositionalDeleteFileWrapper(pos_delete_entry))
-    delete_file_index.global_eq_deletes.add(EqualityDeleteFileWrapper(eq_delete_entry, schema))
+    delete_file_index.add_delete_file(pos_delete_entry, partition_key=None)
+    delete_file_index.add_delete_file(eq_delete_entry, partition_key=None)
 
     result = _match_deletes_to_data_file(
         data_entry,

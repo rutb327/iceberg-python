@@ -7,7 +7,16 @@ T = TypeVar("T")
 
 
 class PartitionMap(Generic[T]):
+    """A map-like structure that organizes values by partition spec ID and partition values.
+
+    Attributes:
+        _specs_by_id: Dictionary mapping spec IDs to PartitionSpec objects
+        _map: Internal dictionary storing values by composite keys
+
+    """
+
     def __init__(self, specs_by_id: Optional[Dict[int, PartitionSpec]] = None) -> None:
+        """Initialize a new PartitionMap."""
         self._specs_by_id = specs_by_id or {}
         self._map: Dict[Tuple[int, Tuple[Any, ...]], T] = {}
 

@@ -2873,13 +2873,13 @@ def create_equality_delete_entry(
 
 
 def create_positional_delete_entry(
-    sequence_number: int = 1, file_path: str = "s3://bucket/data.parquet", spec_id: int = 0
+    sequence_number: int = 1, file_path: str = "s3://bucket/data.parquet", spec_id: int = 0, partition: Optional[Record] = None
 ) -> ManifestEntry:
     delete_file = DataFile.from_args(
         content=DataFileContent.POSITION_DELETES,
         file_path=f"s3://bucket/pos-delete-{sequence_number}.parquet",
         file_format=FileFormat.PARQUET,
-        partition=Record(),
+        partition=partition or Record(),
         record_count=10,
         file_size_in_bytes=100,
         lower_bounds={2147483546: file_path.encode()},
@@ -2890,12 +2890,14 @@ def create_positional_delete_entry(
     return ManifestEntry.from_args(status=ManifestEntryStatus.ADDED, sequence_number=sequence_number, data_file=delete_file)
 
 
-def create_partition_positional_delete_entry(sequence_number: int = 1, spec_id: int = 0) -> ManifestEntry:
+def create_partition_positional_delete_entry(
+    sequence_number: int = 1, spec_id: int = 0, partition: Optional[Record] = None
+) -> ManifestEntry:
     delete_file = DataFile.from_args(
         content=DataFileContent.POSITION_DELETES,
         file_path=f"s3://bucket/pos-delete-{sequence_number}.parquet",
         file_format=FileFormat.PARQUET,
-        partition=Record(),
+        partition=partition or Record(),
         record_count=10,
         file_size_in_bytes=100,
         # No lower_bounds/upper_bounds = partition-scoped delete
