@@ -316,28 +316,21 @@ class DeleteFileIndex:
 
         return None
 
-    def _add_to_partition_group(
-        self, wrapper: Union[EqualityDeleteFileWrapper, PositionalDeleteFileWrapper], partition_key: Optional[Record]
-    ) -> None:
+    def _add_to_partition_group( self, wrapper: Union[EqualityDeleteFileWrapper, PositionalDeleteFileWrapper], partition_key: Optional[Record] ) -> None:
         """Add wrapper to the appropriate partition group based on wrapper type."""
-        if partition_key is None:
-            # Global deletes
-            if isinstance(wrapper, EqualityDeleteFileWrapper):
-                self.global_eq_deletes.add(wrapper)
-            else:
-                spec_id = wrapper.delete_file.spec_id or 0
-                group_pos = self.pos_deletes_by_partition.compute_if_absent(spec_id, None, lambda: PositionalDeletesGroup())
-                group_pos.add(wrapper)
-            return
-
         # Get spec_id from the delete file if available, otherwise use default spec_id 0
         spec_id = wrapper.delete_file.spec_id or 0
 
-        # Add to partition-specific deletes
         if isinstance(wrapper, EqualityDeleteFileWrapper):
-            group_eq = self.eq_deletes_by_partition.compute_if_absent(spec_id, partition_key, lambda: EqualityDeletesGroup())
-            group_eq.add(wrapper)
+            if partition_key is None:
+                # Global equality deletes
+                self.global_eq_deletes.add(wrapper)
+            else:
+                # Partition-specific equality deletes
+                group_eq = self.eq_deletes_by_partition.compute_if_absent(spec_id, partition_key, lambda: EqualityDeletesGroup())
+                group_eq.add(wrapper)
         else:
+            # Position deletes - both partitioned and unpartitioned deletes
             group_pos = self.pos_deletes_by_partition.compute_if_absent(spec_id, partition_key, lambda: PositionalDeletesGroup())
             group_pos.add(wrapper)
 
@@ -363,16 +356,9 @@ class DeleteFileIndex:
             return deletes
 
         # Add position deletes (only if no deletion vector exists)
-        # Check for unpartitioned position deletes
-        unpart_pos_group = self.pos_deletes_by_partition.get(spec_id, None)
-        if unpart_pos_group:
-            deletes.extend(unpart_pos_group.filter(seq, data_file))
-
-        # Check for partition-specific position deletes
-        if partition_key is not None:
-            pos_group = self.pos_deletes_by_partition.get(spec_id, partition_key)
-            if pos_group:
-                deletes.extend(pos_group.filter(seq, data_file))
+        pos_group = self.pos_deletes_by_partition.get(spec_id, partition_key)
+        if pos_group:
+            deletes.extend(pos_group.filter(seq, data_file))
 
         # Path-specific positional deletes
         file_path = data_file.file_path
