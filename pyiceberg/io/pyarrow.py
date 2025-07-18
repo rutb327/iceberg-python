@@ -1450,7 +1450,7 @@ def _task_to_record_batches(
                     task_eq_del = [df for df in task.delete_files if df.content == DataFileContent.EQUALITY_DELETES]
                     for i, delete_file in enumerate(task_eq_del):
                         if delete_file.equality_ids is not None:
-                            table = _apply_equality_deletes(table, equality_deletes[i], delete_file.equality_ids)
+                            table = _apply_equality_deletes(table, equality_deletes[i], delete_file.equality_ids, file_schema)
                     if table.num_rows > 0:
                         current_batch = table.combine_chunks().to_batches()[0]
                     else:
@@ -2792,7 +2792,7 @@ def _determine_partitions(spec: PartitionSpec, schema: Schema, arrow_table: pa.T
     return table_partitions
 
 
-def _apply_equality_deletes(data_table: pa.Table, delete_table: pa.Table, equality_ids: List[int]) -> pa.Table:
+def _apply_equality_deletes(data_table: pa.Table, delete_table: pa.Table, equality_ids: List[int], data_schema: Optional[Schema] = None) -> pa.Table:
     """Apply equality deletes to a data table.
 
     Filter out rows from the table that match the equality delete table the conditions in it.
@@ -2800,13 +2800,13 @@ def _apply_equality_deletes(data_table: pa.Table, delete_table: pa.Table, equali
         data_table: A PyArrow table which has data to filter
         delete_table: A PyArrow table containing the equality deletes
         equality_ids: A List of field IDs to use for equality comparison
+        data_schema: The schema of the PyArrow table
     Returns:
         A filtered PyArrow table with matching rows removed
     """
     if len(delete_table) == 0:
         return data_table
 
-    data_schema = pyarrow_to_schema(data_table.schema)
     equality_columns = [data_schema.find_field(fid).name for fid in equality_ids]
     # Use PyArrow's join function with left anti join type
     result = data_table.join(delete_table.select(equality_columns), keys=equality_columns, join_type="left anti")
