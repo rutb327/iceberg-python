@@ -1431,6 +1431,15 @@ def _task_to_record_batches(
             filter=pyarrow_filter if not deletes else None,
             columns=[col.name for col in file_project_schema.columns],
         )
+        positional_deletes = []
+        combined_eq_deletes = []
+        if deletes:
+            positional_deletes = [d for d in deletes if isinstance(d, pa.ChunkedArray)]
+            equality_deletes = [d for d in deletes if isinstance(d, pa.Table)]
+            if equality_deletes:
+                task_eq_files = [df for df in task.delete_files if df.content == DataFileContent.EQUALITY_DELETES]
+                # Group and combine equality deletes
+                combined_eq_deletes = group_equality_deletes(task_eq_files, equality_deletes)
 
         next_index = 0
         batches = fragment_scanner.to_batches()
@@ -1439,26 +1448,24 @@ def _task_to_record_batches(
             current_index = next_index - len(batch)
             current_batch = batch
 
-            if deletes:
-                positional_deletes = [d for d in deletes if isinstance(d, pa.ChunkedArray)]
-                if positional_deletes:
-                    indices = _combine_positional_deletes(positional_deletes, current_index, current_index + len(batch))
-                    current_batch = current_batch.take(indices)
-                equality_deletes = [d for d in deletes if isinstance(d, pa.Table)]
-                if equality_deletes:
-                    table = pa.Table.from_batches([current_batch])
-                    task_eq_del = [df for df in task.delete_files if df.content == DataFileContent.EQUALITY_DELETES]
-                    for i, delete_file in enumerate(task_eq_del):
-                        if delete_file.equality_ids is not None:
-                            table = _apply_equality_deletes(table, equality_deletes[i], delete_file.equality_ids, file_schema)
-                    if table.num_rows > 0:
-                        current_batch = table.combine_chunks().to_batches()[0]
-                    else:
-                        continue
+            if positional_deletes:
+                indices = _combine_positional_deletes(positional_deletes, current_index, current_index + len(batch))
+                current_batch = current_batch.take(indices)
 
             # skip empty batches
             if current_batch.num_rows == 0:
                 continue
+
+            if combined_eq_deletes:
+                table = pa.Table.from_batches([current_batch])
+                for equality_ids, combined_table in combined_eq_deletes:
+                    table = _apply_equality_deletes(table, combined_table, equality_ids, file_schema)
+                    if table.num_rows == 0:
+                        break
+                if table.num_rows > 0:
+                    current_batch = table.combine_chunks().to_batches()[0]
+                else:
+                    continue
 
             # Apply the user filter
             if pyarrow_filter is not None:
@@ -2791,6 +2798,32 @@ def _determine_partitions(spec: PartitionSpec, schema: Schema, arrow_table: pa.T
 
     return table_partitions
 
+
+def group_equality_deletes(task_eq_files: List[DataFile], equality_delete_tables: List[pa.Table]) -> List[Tuple[List[int], pa.Table]]:
+    """Group equality delete tables by their equality IDs."""
+    equality_delete_groups = {}
+
+    for delete_file, delete_table in zip(task_eq_files, equality_delete_tables):
+        if delete_file.equality_ids:
+            key = frozenset(delete_file.equality_ids)
+
+            # Add to the appropriate group
+            if key not in equality_delete_groups:
+                equality_delete_groups[key] = []
+            equality_delete_groups[key].append((delete_file.equality_ids, delete_table))
+
+    # Combine tables with the same equality IDs
+    combined_deletes = []
+    for items in equality_delete_groups.values():
+        # Use the original equality IDs from the first item
+        original_ids = items[0][0]
+        tables = [item[1] for item in items]
+
+        if tables:
+            combined_table = pa.concat_tables(tables)
+            combined_deletes.append((original_ids, combined_table))
+
+    return combined_deletes
 
 def _apply_equality_deletes(data_table: pa.Table, delete_table: pa.Table, equality_ids: List[int], data_schema: Optional[Schema] = None) -> pa.Table:
     """Apply equality deletes to a data table.
