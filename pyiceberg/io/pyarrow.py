@@ -2799,9 +2799,11 @@ def _determine_partitions(spec: PartitionSpec, schema: Schema, arrow_table: pa.T
     return table_partitions
 
 
-def group_equality_deletes(task_eq_files: List[DataFile], equality_delete_tables: List[pa.Table]) -> List[Tuple[List[int], pa.Table]]:
+def group_equality_deletes(
+    task_eq_files: List[DataFile], equality_delete_tables: List[pa.Table]
+) -> List[Tuple[List[int], pa.Table]]:
     """Group equality delete tables by their equality IDs."""
-    equality_delete_groups = {}
+    equality_delete_groups: Dict[frozenset[int], List[Tuple[List[int], pa.Table]]] = {}
 
     for delete_file, delete_table in zip(task_eq_files, equality_delete_tables):
         if delete_file.equality_ids:
@@ -2825,7 +2827,10 @@ def group_equality_deletes(task_eq_files: List[DataFile], equality_delete_tables
 
     return combined_deletes
 
-def _apply_equality_deletes(data_table: pa.Table, delete_table: pa.Table, equality_ids: List[int], data_schema: Optional[Schema] = None) -> pa.Table:
+
+def _apply_equality_deletes(
+    data_table: pa.Table, delete_table: pa.Table, equality_ids: List[int], data_schema: Optional[Schema]
+) -> pa.Table:
     """Apply equality deletes to a data table.
 
     Filter out rows from the table that match the equality delete table the conditions in it.
@@ -2839,7 +2844,8 @@ def _apply_equality_deletes(data_table: pa.Table, delete_table: pa.Table, equali
     """
     if len(delete_table) == 0:
         return data_table
-
+    if data_schema is None:
+        raise ValueError("Schema is required for applying equality deletes")
     equality_columns = [data_schema.find_field(fid).name for fid in equality_ids]
     # Use PyArrow's join function with left anti join type
     result = data_table.join(delete_table.select(equality_columns), keys=equality_columns, join_type="left anti")
