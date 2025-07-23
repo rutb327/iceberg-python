@@ -1,0 +1,51 @@
+name: "Nightly Docs"
+
+on:
+  schedule:
+    # Run at midnight UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  docs:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install poetry
+        run: make install-poetry
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+      - name: Install docs
+        run: make docs-install
+      - name: Prepare nightly docs directory
+        run: |
+          mkdir -p mkdocs/docs/nightly
+          cp -r mkdocs/docs/* mkdocs/docs/nightly/
+          # Update version information if needed
+          sed -i 's/site_name: PyIceberg/site_name: PyIceberg (Nightly)/g' mkdocs/mkdocs.yml
+      - name: Build docs
+        run: make docs-build
+      - name: Copy
+        working-directory: ./mkdocs
+        run: mv ./site /tmp/site
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+      - name: Update nightly docs
+        run: |
+          mkdir -p gh-pages/nightly
+          rm -rf gh-pages/nightly/*
+          cp -r /tmp/site/* gh-pages/nightly/
+      - name: Push changes to gh-pages branch
+        working-directory: ./gh-pages
+        run: |
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'actions@github.com'
+          git add --all
+          git commit -m 'Update nightly docs' || echo "No changes to commit"
+          git push origin gh-pages || true
+

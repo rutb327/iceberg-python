@@ -31,6 +31,7 @@
     - [How to release](how-to-release.md)
     - [Release Notes](https://github.com/apache/iceberg-python/releases)
     - [Nightly Build](nightly-build.md)
+    - [Nightly Documentation](nightly-docs.md)
 - [Code Reference](reference/)
 
 <!-- markdown-link-check-enable-->
