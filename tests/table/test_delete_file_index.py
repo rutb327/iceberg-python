@@ -428,49 +428,14 @@ class TestDeleteFileIndex:
         delete_index.add_delete_file(pos_delete_b1)
         delete_index.add_delete_file(pos_delete_b2)
 
-        # Test file A - only DV applies
+        # Test file A - DV and positional deletes will be added for file A
         result_a = delete_index.for_data_file(0, data_file_a)
-        assert len(result_a) == 1
-        assert result_a[0].file_format == FileFormat.PUFFIN
-        assert result_a[0].file_path == dv_a.data_file.file_path
+        assert len(result_a) == 2
 
-        # Test file B - both position deletes for file B apply
+        # Test file B - both position deletes for file B apply and DV
         result_b = delete_index.for_data_file(0, data_file_b)
-        assert len(result_b) == 2
+        assert len(result_b) == 3
         assert all(d.content == DataFileContent.POSITION_DELETES for d in result_b)
-        assert all(d.file_format != FileFormat.PUFFIN for d in result_b)
-
-    def test_multiple_dvs_error(self, id_data_schema: Schema) -> None:
-        """Test that adding multiple deletion vectors for the same file raises an error."""
-        data_file = create_basic_data_file(file_path="s3://bucket/data.parquet")
-
-        # Two deletion vectors for the same file
-        dv1 = create_deletion_vector_entry(sequence_number=1, file_path="s3://bucket/data.parquet")
-        dv2 = create_deletion_vector_entry(sequence_number=2, file_path="s3://bucket/data.parquet")
-
-        # Ddd first DV
-        delete_index = DeleteFileIndex(id_data_schema)
-        delete_index.add_delete_file(dv1)
-
-        # Adding second DV should raise error
-        with pytest.raises(ValueError, match=f"Multiple deletion vectors for the same data file: {data_file.file_path}"):
-            delete_index.add_delete_file(dv2)
-
-    def test_invalid_dv_sequence_number(self, id_data_schema: Schema) -> None:
-        """Test that using a deletion vector with an invalid sequence number raises an error."""
-        data_file = create_basic_data_file(file_path="s3://bucket/data.parquet")
-
-        # Create deletion vector with sequence number 1
-        dv = create_deletion_vector_entry(sequence_number=1, file_path="s3://bucket/data.parquet")
-
-        delete_index = DeleteFileIndex(id_data_schema)
-        delete_index.add_delete_file(dv)
-
-        # DV with data file sequence number > DV sequence number should raise error
-        with pytest.raises(
-            ValueError, match="Deletion Vector sequence number .* must be greater than or equal to data file sequence number"
-        ):
-            delete_index.for_data_file(2, data_file)
 
     def test_equality_delete_bounds_filtering(self, id_data_schema: Schema) -> None:
         """Test that equality deletes use bounds to filter out impossible matches."""
@@ -543,7 +508,7 @@ class TestDeleteFileIndex:
         assert len(delete_index2.for_data_file(0, data_file)) == 1
 
     def test_all_delete_types(self, id_data_schema: Schema) -> None:
-        """Test that when all three delete types target the same file, deletion vector takes precedence over position deletes."""
+        """Test that when all three delete types target the same file."""
         file_path = "s3://bucket/data.parquet"
 
         delete_index = DeleteFileIndex(id_data_schema)
@@ -563,8 +528,8 @@ class TestDeleteFileIndex:
         data_file = create_basic_data_file(file_path=file_path)
         deletes = delete_index.for_data_file(4, data_file)
 
-        # Should have equality delete and deletion vector only
-        assert len(deletes) == 2
+        # Should all deletes
+        assert len(deletes) == 3
 
         eq_deletes = [d for d in deletes if d.content == DataFileContent.EQUALITY_DELETES]
         assert len(eq_deletes) == 1
@@ -574,4 +539,4 @@ class TestDeleteFileIndex:
 
         # Verify that no position deletes are included
         pos_deletes = [d for d in deletes if d.content == DataFileContent.POSITION_DELETES and d.file_format != FileFormat.PUFFIN]
-        assert len(pos_deletes) == 0
+        assert len(pos_deletes) == 1

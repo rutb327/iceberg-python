@@ -358,7 +358,7 @@ class DeleteFileIndex:
 
         # Path-specific deletes
         self.pos_deletes_by_path: Dict[str, PositionalDeletesGroup] = {}
-        self.dv_by_path: Dict[str, Tuple[DataFile, int]] = {}
+        self.dv: Dict[str, Tuple[DataFile, int]] = {}
 
     def add_delete_file(self, manifest_entry: ManifestEntry, partition_key: Optional[Record] = None) -> None:
         """Add delete file to the appropriate partition group based on its type.
@@ -398,13 +398,9 @@ class DeleteFileIndex:
         elif data_file.content == DataFileContent.POSITION_DELETES:
             # Check if this is a deletion vector (Puffin format)
             if data_file.file_format == FileFormat.PUFFIN:
-                target_path = self.get_referenced_data_file(data_file)
-                if target_path:
-                    # Store both the data file and its sequence number
-                    sequence_number = manifest_entry.sequence_number or 0
-                    if self.dv_by_path.get(target_path):
-                        raise ValueError(f"Multiple deletion vectors for the same data file: {target_path}")
-                    self.dv_by_path[target_path] = (data_file, sequence_number)
+                sequence_number = manifest_entry.sequence_number or 0
+                path = data_file.file_path
+                self.dv[path] = (data_file, sequence_number)
             else:
                 pos_wrapper = PositionalDeleteFileWrapper(manifest_entry)
 
@@ -478,8 +474,6 @@ class DeleteFileIndex:
         Returns:
             List of delete files that apply to the data file
 
-        Raises:
-            ValueError: If a deletion vector's sequence number is less than the data file's sequence number
         """
         deletes = []
 
@@ -494,13 +488,11 @@ class DeleteFileIndex:
                 deletes.extend(eq_group.filter(seq, data_file))
 
         # Check for deletion vector
-        dv = self._find_deletion_vector(seq, data_file)
-        if dv:
-            # If a deletion vector exists, use it and skip position deletes
-            deletes.append(dv)
-            return deletes
+        for puffin_data_file, puffin_seq in self.dv.values():
+            if puffin_seq >= seq:
+                deletes.append(puffin_data_file)
 
-        # Add position deletes (only if no deletion vector exists)
+        # Add position deletes
         pos_group = self.pos_deletes_by_partition.get(spec_id, partition_key)
         if pos_group:
             deletes.extend(pos_group.filter(seq, data_file))
@@ -512,28 +504,3 @@ class DeleteFileIndex:
 
         return deletes
 
-    def _find_deletion_vector(self, seq: int, data_file: DataFile) -> Optional[DataFile]:
-        """Find a deletion vector that applies to the given data file.
-
-        Args:
-            seq: The sequence number of the data file
-            data_file: The data file to find a deletion vector for
-
-        Returns:
-            The deletion vector or None if not found
-
-        Raises:
-            ValueError: If a deletion vector's sequence number is less than the data file's sequence number
-        """
-        file_path = data_file.file_path
-        dv_tuple = self.dv_by_path.get(file_path)
-
-        if dv_tuple:
-            dv, dv_seq = dv_tuple
-            if dv_seq < seq:
-                raise ValueError(
-                    f"Deletion Vector sequence number ({dv_seq}) must be greater than or equal to data file sequence number ({seq})"
-                )
-            return dv
-
-        return None

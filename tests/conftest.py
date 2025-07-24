@@ -2918,8 +2918,7 @@ def create_deletion_vector_entry(
         partition=Record(),
         record_count=10,
         file_size_in_bytes=100,
-        lower_bounds={2147483546: file_path.encode()},
-        upper_bounds={2147483546: file_path.encode()},
+        refereence_file_path= file_path,
     )
     delete_file._spec_id = spec_id
 
