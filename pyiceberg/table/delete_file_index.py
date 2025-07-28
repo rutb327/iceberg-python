@@ -359,6 +359,8 @@ class DeleteFileIndex:
         # Path-specific deletes
         self.pos_deletes_by_path: Dict[str, PositionalDeletesGroup] = {}
         self.dv: Dict[str, Tuple[DataFile, int]] = {}
+        self.dv_values: Optional[List[Tuple[DataFile, int]]] = None
+        self.dv_sorted: bool = False
 
     def add_delete_file(self, manifest_entry: ManifestEntry, partition_key: Optional[Record] = None) -> None:
         """Add delete file to the appropriate partition group based on its type.
@@ -488,9 +490,13 @@ class DeleteFileIndex:
                 deletes.extend(eq_group.filter(seq, data_file))
 
         # Check for deletion vector
-        for puffin_data_file, puffin_seq in self.dv.values():
-            if puffin_seq >= seq:
-                deletes.append(puffin_data_file)
+        if self.dv:
+            if not self.dv_sorted:
+                self.dv_values = sorted(self.dv.values(), key=lambda x: x[1])
+                self.dv_sorted = True
+
+            start_idx = bisect_left([item[1] for item in self.dv_values], seq)
+            deletes.extend([item[0] for item in self.dv_values[start_idx:]])
 
         # Add position deletes
         pos_group = self.pos_deletes_by_partition.get(spec_id, partition_key)
