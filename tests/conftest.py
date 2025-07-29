@@ -2369,7 +2369,7 @@ def example_task(data_file: str) -> FileScanTask:
 
 
 @pytest.fixture
-def equality_delete_task(table_schema_simple: Schema, tmp_path: str) -> FileScanTask:
+def simple_scan_task(table_schema_simple: Schema, tmp_path: str) -> FileScanTask:
     import pyarrow as pa
     from pyarrow import parquet as pq
 
