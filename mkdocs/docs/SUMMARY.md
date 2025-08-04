@@ -24,6 +24,8 @@
 - [Configuration](configuration.md)
 - [CLI](cli.md)
 - [API](api.md)
+    - [Row Filter Syntax](row-filter-syntax.md)
+    - [Expression DSL](expression-dsl.md)
 - [Contributing](contributing.md)
 - [Community](community.md)
 - Releases
@@ -32,6 +34,7 @@
     - [Release Notes](https://github.com/apache/iceberg-python/releases)
     - [Nightly Build](nightly-build.md)
 - [Code Reference](reference/)
+- [Nightly](https://py.iceberg.apache.org/nightly/)
 
 <!-- markdown-link-check-enable-->
 
