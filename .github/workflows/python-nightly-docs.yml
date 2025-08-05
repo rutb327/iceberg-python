@@ -25,7 +25,7 @@ on:
   workflow_dispatch:  # Allow manual triggering
 
 jobs:
-  build-and-deploy:
+  build-and-deploy-nightly:
     runs-on: ubuntu-22.04
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
@@ -49,37 +49,9 @@ jobs:
       - name: Install documentation dependencies
         run: make docs-install
 
-      - name: Build documentation
+      - name: Build and deploy nightly documentation
         run: |
-          cd mkdocs
-          ./build-all.sh
-
-      - name: Deploy documentation
-        run: |
+          cd mkdocs/docs/nightly
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
-
-          # Clone the gh-pages branch
-          git clone --single-branch --branch gh-pages https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} gh-pages-repo || {
-            git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} gh-pages-repo
-            cd gh-pages-repo
-            git checkout --orphan gh-pages
-            git rm -rf .
-            echo "py.iceberg.apache.org" > CNAME
-            git add CNAME
-            git commit -m "Initialize gh-pages branch"
-            git push origin gh-pages
-            cd ..
-          }
-
-          # Copy the built site (which contains both main and nightly)
-          rm -rf gh-pages-repo/*
-          cp -r mkdocs/site/* gh-pages-repo/
-          touch gh-pages-repo/.nojekyll
-
-          cd gh-pages-repo
-          git add --all
-          if ! git diff --staged --quiet; then
-            git commit -m "Update documentation with both main and nightly versions"
-            git push origin gh-pages
-          fi
+          mkdocs gh-deploy --remote-branch=gh-pages --config-file mkdocs.yml --remote-name origin --force --dir-name nightly

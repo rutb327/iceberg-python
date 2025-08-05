@@ -35,22 +35,13 @@ jobs:
         run: make install-poetry
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: 3.12
       - name: Install docs
         run: make docs-install
-      - name: Build docs
-        run: make docs-build
-      - name: Copy
-        working-directory: ./mkdocs
-        run: mv ./site /tmp/site
-      - name: Push changes to gh-pages branch
+      - name: Deploy latest docs to gh-pages
         run: |
-          git checkout --orphan gh-pages-tmp
-          git rm --quiet -rf .
-          cp -r /tmp/site/* .
+          cd mkdocs/docs/latest
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
-          echo "py.iceberg.apache.org" > CNAME
-          git add --all
-          git commit -m 'Publish Python docs'
-          git push -f origin gh-pages-tmp:gh-pages || true
+          echo "py.iceberg.apache.org" > ../../CNAME
+          mkdocs gh-deploy --remote-branch=gh-pages --config-file mkdocs.yml --force
